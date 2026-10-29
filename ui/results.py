@@ -14,6 +14,7 @@ from core.test_runner import retry_incomplete_cases
 from ui.result_helpers import (
     filter_results, format_run_status, format_timestamp, load_selected_run,
     result_status, run_label, run_summary, safe_error_message, snapshot_map,
+    export_run_results_csv,
 )
 from ui.prompt_workspace import consume_selection_context
 from ui.prompt_workspace import request_workspace_navigation
@@ -208,6 +209,15 @@ def render():
     suite = suites_by_id.get(run.get("suite_id"), {}) if run.get("suite_id") else {}
     suite_name = suite.get("name") or suite_snapshot.get("name") or (f"Suite #{run['suite_id']}" if run.get("suite_id") else "No suite")
     summary = run_summary(run)
+
+    st.download_button(
+        "Download run results (CSV)",
+        data=export_run_results_csv(run, results),
+        file_name=f"promptlab-run-{run['run_id']}.csv",
+        mime="text/csv",
+        key=f"results_download_csv_{run['run_id']}",
+        help="Export one row per test, including status, evaluation details, response, and run metadata.",
+    )
 
     finalized_runs = [item for item in runs if item.get("status") != "running"]
     snapshot_ids = set(run.get("test_case_ids", []))

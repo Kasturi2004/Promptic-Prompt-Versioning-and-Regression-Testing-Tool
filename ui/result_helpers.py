@@ -1,6 +1,8 @@
 """Small, Streamlit-independent helpers for run-based result pages."""
 
 from datetime import datetime
+import csv
+import io
 import re
 
 from core.db import get_evaluation_run, get_results_for_run
@@ -77,6 +79,45 @@ def snapshot_map(run):
     metadata = run.get("metadata") if isinstance(run.get("metadata"), dict) else {}
     snapshots = metadata.get("test_cases") or []
     return {case["id"]: case for case in snapshots if isinstance(case, dict) and "id" in case}
+
+
+def export_run_results_csv(run, results):
+    """Serialize a run and its test outcomes as a spreadsheet-friendly CSV."""
+    output = io.StringIO(newline="")
+    fields = [
+        "run_id", "run_status", "prompt_id", "suite_id", "started_at",
+        "completed_at", "test_case_id", "test_name", "status", "input",
+        "expected", "actual", "evaluation_method", "evaluation_reason",
+        "response", "error", "execution_time_seconds",
+    ]
+    writer = csv.DictWriter(output, fieldnames=fields, lineterminator="\r\n")
+    writer.writeheader()
+    snapshots = snapshot_map(run)
+    for result in results:
+        snapshot = snapshots.get(result.get("test_case_id"), {})
+        metadata = result.get("metadata") if isinstance(result.get("metadata"), dict) else {}
+        evaluation = result.get("evaluation") or metadata.get("evaluation") or {}
+        evaluation = evaluation if isinstance(evaluation, dict) else {}
+        writer.writerow({
+            "run_id": run.get("run_id"),
+            "run_status": run.get("status"),
+            "prompt_id": run.get("prompt_id"),
+            "suite_id": run.get("suite_id"),
+            "started_at": run.get("started_at") or run.get("created_at"),
+            "completed_at": run.get("completed_at"),
+            "test_case_id": result.get("test_case_id"),
+            "test_name": snapshot.get("name") or snapshot.get("description") or result.get("description"),
+            "status": result_status(result),
+            "input": snapshot.get("input_text", result.get("input_text")),
+            "expected": evaluation.get("expected", result.get("expected", snapshot.get("expected_keyword"))),
+            "actual": evaluation.get("actual", result.get("actual")),
+            "evaluation_method": evaluation.get("evaluation_method", result.get("evaluation_method", snapshot.get("scoring_type"))),
+            "evaluation_reason": evaluation.get("reason") or result.get("score_reason"),
+            "response": result.get("ai_response"),
+            "error": safe_error_message(result.get("error_message")) if result.get("error_message") else None,
+            "execution_time_seconds": result.get("execution_time"),
+        })
+    return output.getvalue()
 
 
 def result_status(result):
