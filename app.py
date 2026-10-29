@@ -9,7 +9,7 @@ from core.db import init_db
 from ui import dashboard, prompt_editor, test_cases, run_tests, results, compare, settings, login
 from ui.prompt_workspace import consume_workspace_navigation, normalize_workspace_page
 
-st.set_page_config(page_title="PromptLab", page_icon="🧪", layout="wide")
+st.set_page_config(page_title="PromptLab | Prompt Regression Testing", page_icon="🧪", layout="wide")
 
 init_db()
 
