@@ -1,5 +1,7 @@
 """Run-centered evaluation results and test-level diagnostics."""
 
+import csv
+import io
 import logging
 
 import streamlit as st
@@ -131,6 +133,30 @@ def _render_legacy_results(prompts):
             st.divider()
 
 
+def _results_csv(results, snapshots):
+    """Build a portable CSV export for the currently selected evaluation run."""
+    output = io.StringIO(newline="")
+    fields = ["test_case_id", "test_case", "status", "input", "expected", "actual", "response", "error"]
+    writer = csv.DictWriter(output, fieldnames=fields)
+    writer.writeheader()
+    for result in results:
+        snapshot = snapshots.get(result.get("test_case_id"), {})
+        metadata = result.get("metadata") if isinstance(result.get("metadata"), dict) else {}
+        evaluation = result.get("evaluation") or metadata.get("evaluation") or {}
+        evaluation = evaluation if isinstance(evaluation, dict) else {}
+        writer.writerow({
+            "test_case_id": result.get("test_case_id", ""),
+            "test_case": snapshot.get("name") or snapshot.get("description") or result.get("description", ""),
+            "status": result_status(result),
+            "input": snapshot.get("input_text", result.get("input_text", "")),
+            "expected": evaluation.get("expected", result.get("expected", snapshot.get("expected_keyword", ""))),
+            "actual": evaluation.get("actual", result.get("actual", "")),
+            "response": result.get("ai_response", ""),
+            "error": safe_error_message(result.get("error_message")) if result.get("error_message") else "",
+        })
+    return output.getvalue()
+
+
 def render():
     st.title("Results")
     st.caption("Review a specific evaluation run, its outcomes, and the responses it produced.")
@@ -260,6 +286,13 @@ def render():
     visible = filter_results(results, filter_choice)
     st.caption(f"Showing {len(visible)} of {len(results)} persisted result(s). Disabled or unselected cases are not shown as evaluated.")
     snapshots = snapshot_map(run)
+    st.download_button(
+        "Download run results as CSV",
+        data=_results_csv(results, snapshots),
+        file_name=f"promptlab-run-{run['run_id'][:8]}.csv",
+        mime="text/csv",
+        key=f"results_download_csv_{run['run_id']}",
+    )
     for result in visible:
         snapshot = snapshots.get(result.get("test_case_id"), {})
         _render_test_result(result, snapshot)
