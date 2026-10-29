@@ -41,6 +41,8 @@ def init_db():
     """)
 
     user_columns = {row["name"] for row in cur.execute("PRAGMA table_info(users)")}
+    if "recovery_code_hash" not in user_columns:
+        cur.execute("ALTER TABLE users ADD COLUMN recovery_code_hash TEXT")
     if "role" not in user_columns:
         legacy_user_count = cur.execute("SELECT COUNT(*) FROM users").fetchone()[0]
         if legacy_user_count > 1:

@@ -27,6 +27,8 @@ Start PromptLab:
 
 On first launch, PromptLab asks you to create the local account used to access the app. Its SQLite database and local settings are stored under `data/`.
 
+During administrator setup, PromptLab displays a one-time recovery code. Save it somewhere safe; it is required to reset the administrator password from the login screen, and a successful reset invalidates the code. Passwords can also be changed while signed in from **Settings** by entering the current password.
+
 ## Project structure
 
 - `app.py` — Streamlit entry point
