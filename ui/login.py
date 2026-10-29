@@ -11,6 +11,8 @@ from core.auth import (
     clear_authentication_state,
     create_first_admin,
     create_user,
+    generate_recovery_code,
+    recover_admin_password,
 )
 
 logger = logging.getLogger(__name__)
@@ -18,6 +20,7 @@ logger = logging.getLogger(__name__)
 _LANDING = "landing"
 _LOGIN = "login"
 _CREATE_ADMIN = "create_admin"
+_RECOVER_PASSWORD = "recover_password"
 
 
 def render() -> bool:
@@ -35,6 +38,10 @@ def render() -> bool:
 
     st.title("PromptLab")
     if state == "login":
+        recovery_code = st.session_state.pop("new_recovery_code", None)
+        if recovery_code:
+            st.info("Save this administrator recovery code somewhere safe. It is shown only once.")
+            st.write(recovery_code)
         notice = st.session_state.pop("login_notice", None)
         if notice:
             st.success(notice)
@@ -49,6 +56,8 @@ def render() -> bool:
     view = st.session_state.get("auth_view", _LANDING)
     if view == _CREATE_ADMIN:
         _render_first_run_setup()
+    elif view == _RECOVER_PASSWORD:
+        _render_recovery_form()
     elif view == _LOGIN:
         _render_login_form(fresh_install=True)
     else:
@@ -107,10 +116,12 @@ def _render_first_run_setup():
             st.error("Passwords do not match.")
         else:
             try:
-                create_first_admin(username.strip(), password)
+                recovery_code = generate_recovery_code()
+                create_first_admin(username.strip(), password, recovery_code=recovery_code)
                 clear_authentication_state(st.session_state)
                 st.session_state["auth_view"] = _LOGIN
                 st.session_state["login_notice"] = "Administrator account created successfully. Please log in."
+                st.session_state["new_recovery_code"] = recovery_code
                 st.rerun()
             except ValueError as exc:
                 if str(exc) == "Admin account setup is already complete.":
@@ -153,10 +164,41 @@ def _render_login_form(fresh_install: bool):
         st.session_state["auth_view"] = _LANDING
         st.rerun()
     elif not fresh_install:
+        if st.button("Forgot administrator password?", key="login_recovery_button"):
+            st.session_state["auth_view"] = _RECOVER_PASSWORD
+            st.rerun()
         st.write("Don't have an account?")
         if st.button("Sign Up", key="login_signup_button"):
             st.session_state["auth_view"] = "signup"
             st.rerun()
+
+
+def _render_recovery_form():
+    st.subheader("Recover administrator account")
+    st.caption("Enter the recovery code saved when the administrator account was created.")
+    username = st.text_input("Administrator username", key="recovery_username")
+    code = st.text_input("Recovery code", type="password", key="recovery_code")
+    password = st.text_input("New password", type="password", key="recovery_new_password")
+    confirm = st.text_input("Confirm new password", type="password", key="recovery_confirm_password")
+    if st.button("Reset Administrator Password", type="primary", key="recovery_submit_button"):
+        if len(password) < 6:
+            st.error("Password must be at least 6 characters.")
+        elif password != confirm:
+            st.error("Passwords do not match.")
+        else:
+            try:
+                recover_admin_password(username, code, password)
+                st.session_state["auth_view"] = _LOGIN
+                st.session_state["login_notice"] = "Administrator password reset. Please log in with your new password."
+                st.rerun()
+            except ValueError as exc:
+                st.error(str(exc))
+            except Exception:
+                logger.exception("Unable to recover the PromptLab administrator account")
+                st.error("PromptLab could not recover the account. Please try again.")
+    if st.button("← Back to Log In", key="recovery_back_button"):
+        st.session_state["auth_view"] = _LOGIN
+        st.rerun()
 
 
 def _render_signup_form():

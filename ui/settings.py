@@ -3,8 +3,7 @@
 import streamlit as st
 
 from core.ai_client import _MODEL_NAME, is_configured
-from core.auth import authenticate, create_user_as_admin, hash_password, is_admin
-from core.db import get_connection
+from core.auth import change_password, create_user_as_admin, is_admin
 from core.settings import load_settings, save_settings
 
 
@@ -45,23 +44,18 @@ def render():
     confirm_password = st.text_input("Confirm new password", type="password", key="settings_confirm_pw")
 
     if st.button("Update Password", key="settings_update_pw_button"):
-        if not authenticate(current_username, old_password):
-            st.error("Current password is incorrect.")
-        elif len(new_password) < 6:
+        if len(new_password) < 6:
             st.error("New password must be at least 6 characters.")
         elif new_password != confirm_password:
             st.error("New passwords do not match.")
         else:
-            conn = get_connection()
             try:
-                conn.execute(
-                    "UPDATE users SET password_hash = ? WHERE username = ?",
-                    (hash_password(new_password), current_username),
-                )
-                conn.commit()
+                change_password(current_username, old_password, new_password)
                 st.success("Password updated.")
-            finally:
-                conn.close()
+            except ValueError as exc:
+                st.error(str(exc))
+            except Exception:
+                st.error("PromptLab could not update your password. Please try again.")
 
     if current_user_is_admin:
         st.divider()

@@ -2,6 +2,8 @@
 
 import bcrypt
 import sqlite3
+import hashlib
+import secrets
 from datetime import datetime
 
 from core.db import get_connection
@@ -27,6 +29,15 @@ def _validate_credentials(username, plain_password):
     if not isinstance(plain_password, str) or len(plain_password) < 6:
         raise ValueError("Password must be at least 6 characters.")
     return username.strip()
+
+
+def generate_recovery_code() -> str:
+    """Create a high-entropy, one-time-display recovery code."""
+    return secrets.token_urlsafe(24)
+
+
+def _recovery_code_hash(code: str) -> str:
+    return hashlib.sha256(code.encode("utf-8")).hexdigest()
 
 
 def user_exists(username: str) -> bool:
@@ -70,13 +81,14 @@ def any_users_exist() -> bool:
         conn.close()
 
 
-def create_first_admin(username: str, plain_password: str) -> int:
+def create_first_admin(username: str, plain_password: str, recovery_code: str = None) -> int:
     """Atomically create the bootstrap account exactly once.
 
     The immediate write lock makes the administrator check and insert one
     serialized operation, including when two app processes submit setup concurrently.
     """
     username = _validate_credentials(username, plain_password)
+    recovery_code = recovery_code or generate_recovery_code()
     password_hash = hash_password(plain_password)
     conn = get_connection()
     try:
@@ -84,8 +96,8 @@ def create_first_admin(username: str, plain_password: str) -> int:
         if conn.execute("SELECT 1 FROM users WHERE role = 'admin' LIMIT 1").fetchone() is not None:
             raise ValueError("Admin account setup is already complete.")
         cursor = conn.execute(
-            "INSERT INTO users (username, password_hash, created_at, role) VALUES (?, ?, ?, 'admin')",
-            (username, password_hash, datetime.now().isoformat()),
+            "INSERT INTO users (username, password_hash, created_at, role, recovery_code_hash) VALUES (?, ?, ?, 'admin', ?)",
+            (username, password_hash, datetime.now().isoformat(), _recovery_code_hash(recovery_code)),
         )
         conn.commit()
         return cursor.lastrowid
@@ -158,6 +170,52 @@ def authenticate_user(username: str, plain_password: str):
 def authenticate(username: str, plain_password: str) -> bool:
     """Return True only when a persisted user's password matches."""
     return authenticate_user(username, plain_password) is not None
+
+
+def change_password(username: str, current_password: str, new_password: str) -> None:
+    """Change a password only after verifying the current password."""
+    _validate_credentials(username, new_password)
+    conn = get_connection()
+    try:
+        conn.execute("BEGIN IMMEDIATE")
+        row = conn.execute("SELECT password_hash FROM users WHERE username = ?", (username,)).fetchone()
+        if row is None or not verify_password(current_password, row["password_hash"]):
+            raise ValueError("Current password is incorrect.")
+        conn.execute("UPDATE users SET password_hash = ? WHERE username = ?", (hash_password(new_password), username))
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+
+
+def recover_admin_password(username: str, recovery_code: str, new_password: str) -> None:
+    """Reset the local administrator password using its one-time-issued code."""
+    if not isinstance(new_password, str) or len(new_password) < 6:
+        raise ValueError("Password must be at least 6 characters.")
+    if not isinstance(recovery_code, str) or not recovery_code:
+        raise ValueError("Recovery code is incorrect.")
+    conn = get_connection()
+    try:
+        conn.execute("BEGIN IMMEDIATE")
+        row = conn.execute(
+            "SELECT recovery_code_hash FROM users WHERE username = ? AND role = 'admin'", (username.strip(),)
+        ).fetchone()
+        if row is None or not row["recovery_code_hash"] or not secrets.compare_digest(
+            row["recovery_code_hash"], _recovery_code_hash(recovery_code.strip())
+        ):
+            raise ValueError("Recovery code is incorrect.")
+        conn.execute(
+            "UPDATE users SET password_hash = ?, recovery_code_hash = NULL WHERE username = ? AND role = 'admin'",
+            (hash_password(new_password), username.strip()),
+        )
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
 
 
 def clear_authentication_state(session_state):
