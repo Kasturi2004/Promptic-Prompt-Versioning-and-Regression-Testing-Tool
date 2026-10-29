@@ -187,6 +187,11 @@ def render():
     snapshot_ids = set(run.get("test_case_ids", []))
     retryable_count = sum(1 for item in results if result_status(item) == "ERROR")
     retryable_count += len(snapshot_ids - {item.get("test_case_id") for item in results})
+    if retryable_count:
+        st.warning(
+            f"{retryable_count} case(s) need another attempt. Retry creates a new run and keeps this run's results for reference.",
+            icon="⚠️",
+        )
     action_cols = st.columns(4)
     can_compare_run = len(finalized_runs) >= 2 and run.get("status") != "running"
     if action_cols[0].button("Compare this run", disabled=not can_compare_run,
@@ -199,7 +204,8 @@ def render():
         st.session_state["prompt_workspace_pending_version_id"] = prompt["id"]
         request_workspace_navigation(st.session_state, "Prompt Workspace")
         st.rerun()
-    if action_cols[2].button(f"Retry errors ({retryable_count})", disabled=retryable_count == 0,
+    if action_cols[2].button(f"Retry {retryable_count} case(s)", type="primary",
+                             disabled=retryable_count == 0, use_container_width=True,
                              key=f"results_retry_run_{run['run_id']}"):
         try:
             retry_results = retry_incomplete_cases(run["run_id"])
