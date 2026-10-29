@@ -8,6 +8,7 @@ from core.db import (
     get_all_prompts, get_all_test_suites, get_evaluation_runs_for_prompt,
     get_results_for_prompt,
 )
+from core.test_runner import retry_incomplete_cases
 from ui.result_helpers import (
     filter_results, format_run_status, format_timestamp, load_selected_run,
     result_status, run_label, run_summary, safe_error_message, snapshot_map,
@@ -183,7 +184,10 @@ def render():
     summary = run_summary(run)
 
     finalized_runs = [item for item in runs if item.get("status") != "running"]
-    action_cols = st.columns(3)
+    snapshot_ids = set(run.get("test_case_ids", []))
+    retryable_count = sum(1 for item in results if result_status(item) == "ERROR")
+    retryable_count += len(snapshot_ids - {item.get("test_case_id") for item in results})
+    action_cols = st.columns(4)
     can_compare_run = len(finalized_runs) >= 2 and run.get("status") != "running"
     if action_cols[0].button("Compare this run", disabled=not can_compare_run,
                              key=f"results_compare_run_{run['run_id']}"):
@@ -195,7 +199,21 @@ def render():
         st.session_state["prompt_workspace_pending_version_id"] = prompt["id"]
         request_workspace_navigation(st.session_state, "Prompt Workspace")
         st.rerun()
-    action_cols[2].caption("Compare Runs requires two finalized runs. The baseline must be selected explicitly.")
+    if action_cols[2].button(f"Retry errors ({retryable_count})", disabled=retryable_count == 0,
+                             key=f"results_retry_run_{run['run_id']}"):
+        try:
+            retry_results = retry_incomplete_cases(run["run_id"])
+            if retry_results:
+                new_run_id = retry_results[0]["run_id"]
+                st.success(f"Retry run created for {len(retry_results)} errored or unrecorded case(s).")
+                st.session_state["results_pending_run_id"] = new_run_id
+                st.rerun()
+            else:
+                st.info("This run has no errored or unrecorded cases to retry.")
+        except Exception:
+            _LOGGER.exception("Could not retry incomplete evaluation run %s", run["run_id"])
+            st.error("Could not retry this run. Check its saved prompt and case snapshots, then review the application logs.")
+    action_cols[3].caption("Compare Runs requires two finalized runs. The baseline must be selected explicitly.")
 
     st.subheader(f"Prompt v{prompt.get('version_number', '?')} · {prompt.get('commit_message') or 'Untitled version'}")
     st.caption(f"Suite: {suite_name} · Run status: {format_run_status(run.get('status'))}")

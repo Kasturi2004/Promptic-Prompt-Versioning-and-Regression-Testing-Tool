@@ -13,7 +13,7 @@ from core.ai_client import AIClientError, generate_response
 from core.scorer import evaluate_response
 from core.db import (save_test_result, validate_test_case, create_evaluation_run,
                      finish_evaluation_run, get_prompt_by_id, get_test_suite,
-                     get_test_cases_for_suite)
+                     get_test_cases_for_suite, get_evaluation_run, get_results_for_run)
 
 DEFAULT_MAX_CONCURRENT_REQUESTS = 3
 DEFAULT_REQUEST_TIMEOUT = 30.0
@@ -137,7 +137,7 @@ def _run_single_test(prompt_id: int, run_id: str, prompt_text: str, test_case: d
 
 def run_tests(prompt_id: int, prompt_text: str, test_cases: list[dict],
               max_workers: int = DEFAULT_MAX_CONCURRENT_REQUESTS,
-              progress_callback=None, suite_id=None) -> list[dict]:
+              progress_callback=None, suite_id=None, retry_of_run_id=None) -> list[dict]:
     """Evaluate each case independently and return structured, persisted results."""
     if not isinstance(prompt_id, int) or isinstance(prompt_id, bool) or prompt_id <= 0:
         raise ValueError("A valid prompt version is required.")
@@ -178,6 +178,8 @@ def run_tests(prompt_id: int, prompt_text: str, test_cases: list[dict],
             "id", "name", "description", "input_text", "expected_condition",
             "expected_keyword", "scoring_type", "enabled")} for case in test_cases],
     }
+    if retry_of_run_id:
+        run_metadata["retry_of_run_id"] = retry_of_run_id
     run_id = create_evaluation_run(prompt_id, case_ids, run_metadata, suite_id=suite_id)
     if not test_cases:
         finish_evaluation_run(run_id, "completed")
@@ -243,6 +245,30 @@ def run_tests(prompt_id: int, prompt_text: str, test_cases: list[dict],
         raise fatal_execution_error
 
     return [results_by_id[case_id] for case_id in case_ids]
+
+
+def retry_incomplete_cases(run_id: str, max_workers: int = DEFAULT_MAX_CONCURRENT_REQUESTS,
+                           progress_callback=None) -> list[dict]:
+    """Create a new auditable run for errored or unrecorded cases from a prior run."""
+    run = get_evaluation_run(run_id)
+    if run is None:
+        raise ValueError("Evaluation run does not exist.")
+    metadata = run.get("metadata") or {}
+    prompt_text = metadata.get("prompt_text")
+    if not prompt_text:
+        raise ValueError("This run has no saved prompt snapshot and cannot be retried.")
+    snapshots = {case.get("id"): case for case in metadata.get("test_cases", []) if isinstance(case, dict)}
+    results = get_results_for_run(run_id)
+    results_by_case = {result["test_case_id"]: result for result in results}
+    retry_ids = [case_id for case_id in run["test_case_ids"]
+                 if case_id not in results_by_case or results_by_case[case_id].get("status") == "ERROR"]
+    if not retry_ids:
+        return []
+    cases = [snapshots[case_id] for case_id in retry_ids if case_id in snapshots]
+    if len(cases) != len(retry_ids):
+        raise ValueError("A test-case snapshot is missing for one or more cases in this run.")
+    return run_tests(run["prompt_id"], prompt_text, cases, max_workers=max_workers,
+                     progress_callback=progress_callback, retry_of_run_id=run_id)
 
 
 def run_suite(prompt_id: int, prompt_text: str, suite_id: int,

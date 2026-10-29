@@ -95,7 +95,6 @@ class EvaluationEngineTests(unittest.TestCase):
         self.assertEqual(result["evaluation_method"], "contains_all_keywords")
         self.assertEqual(result["evaluation"]["actual"], "refund follows the policy")
 
-
 class GeminiClientTests(unittest.TestCase):
     def _fake_sdk(self, model):
         return SimpleNamespace(
